@@ -272,6 +272,7 @@ body {
   white-space: nowrap;
   transition: all 0.2s;
   font-family: 'DM Sans', sans-serif;
+  text-decoration: none;
 }
 .cal-btn:hover { background: var(--teal); color: white; border-color: var(--teal); }
 .action-btn {
@@ -296,6 +297,7 @@ body {
   color: var(--charcoal);
   opacity: 0.4;
 }
+.empty-state.hidden { display: none; }
 .empty-state p { font-family: 'DM Serif Display', serif; font-size: 18px; margin-bottom: 6px; }
 .empty-state span { font-size: 13px; }
 
@@ -408,7 +410,7 @@ body {
     </div>
     <span class="logo-tagline">keep or cut?</span>
   </div>
-  <button class="header-btn" onclick="openAdd()">+ Add subscription</button>
+  <button class="header-btn" id="btn-add">+ Add subscription</button>
 </header>
 
 <main class="main">
@@ -457,9 +459,9 @@ body {
   <div class="toolbar">
     <div class="search-wrap">
       <span class="search-icon">⌕</span>
-      <input type="text" id="srch" placeholder="Search subscriptions..." oninput="render()">
+      <input type="text" id="srch" placeholder="Search subscriptions...">
     </div>
-    <select id="srt" onchange="render()">
+    <select id="srt">
       <option value="renewal">Sort by renewal</option>
       <option value="name">Sort by name</option>
       <option value="cost">Sort by cost</option>
@@ -481,8 +483,8 @@ body {
       <tbody id="tbody"></tbody>
     </table>
     <div class="empty-state hidden" id="empty">
-      <p>Nothing here yet</p>
-      <span>Add your first subscription above</span>
+      <p id="empty-title">Nothing here yet</p>
+      <span id="empty-hint">Add your first subscription above</span>
     </div>
   </div>
 
@@ -492,15 +494,15 @@ body {
 <div class="modal-overlay hidden" id="modal-overlay">
   <div class="modal">
     <h2 id="modal-title">Add subscription</h2>
-    <div class="fld"><label>Name</label><input id="m-name" placeholder="e.g. Netflix"></div>
-    <div class="fld"><label>Author / provider</label><input id="m-author" placeholder="e.g. Netflix Inc."></div>
+    <div class="fld"><label for="m-name">Name</label><input id="m-name" maxlength="120" placeholder="e.g. Netflix"></div>
+    <div class="fld"><label for="m-author">Author / provider</label><input id="m-author" maxlength="120" placeholder="e.g. Netflix Inc."></div>
     <div class="fld-row">
-      <div class="fld"><label>Category</label><select id="m-cat"></select></div>
-      <div class="fld"><label>Start date (e.g. Feb 4, 2026)</label><input id="m-since" placeholder="Apr 18, 2026"></div>
+      <div class="fld"><label for="m-cat">Category</label><select id="m-cat"></select></div>
+      <div class="fld"><label for="m-since">Start date</label><input id="m-since" type="date"></div>
     </div>
-    <div class="fld"><label>Annual price ($)</label><input id="m-price" type="number" step="0.01" placeholder="0.00"></div>
+    <div class="fld"><label for="m-price">Annual price ($)</label><input id="m-price" type="number" min="0" step="0.01" placeholder="0.00"></div>
     <div class="divider"></div>
-    <div class="fld"><label>Keep or cut?</label>
+    <div class="fld"><label for="m-worth">Keep or cut?</label>
       <select id="m-worth">
         <option value="">— undecided —</option>
         <option value="keep">Keep</option>
@@ -508,12 +510,12 @@ body {
         <option value="maybe">Maybe</option>
       </select>
     </div>
-    <div class="fld"><label>Notes (pricing details, reminders...)</label>
-      <textarea id="m-notes" placeholder="e.g. First year 65% off, then $69 · finish the course before canceling"></textarea>
+    <div class="fld"><label for="m-notes">Notes (pricing details, reminders...)</label>
+      <textarea id="m-notes" maxlength="500" placeholder="e.g. First year 65% off, then $69 · finish the course before canceling"></textarea>
     </div>
     <div class="modal-actions">
-      <button class="btn-cancel" onclick="closeModal()">Cancel</button>
-      <button class="btn-save" onclick="saveItem()">Save</button>
+      <button class="btn-cancel" id="btn-cancel">Cancel</button>
+      <button class="btn-save" id="btn-save">Save</button>
     </div>
   </div>
 </div>
@@ -522,308 +524,490 @@ body {
 <div class="modal-overlay hidden" id="cat-modal-overlay">
   <div class="modal">
     <h2>Manage categories</h2>
-    <p style="font-size:13px;opacity:0.55;margin-bottom:1rem">Up to 5 categories. Drag to reorder (coming soon).</p>
+    <p style="font-size:13px;opacity:0.55;margin-bottom:1rem">Up to 5 categories. Renaming a category moves its subscriptions with it.</p>
     <div class="cat-modal-list" id="cat-modal-list"></div>
-    <button onclick="addCatField()" style="font-size:13px;padding:8px 16px;border-radius:20px;border:1.5px dashed var(--beige-darker);background:transparent;cursor:pointer;font-family:'DM Sans',sans-serif;color:var(--charcoal);opacity:0.6">+ Add category</button>
+    <button class="add-cat-btn" id="btn-add-cat-field">+ Add category</button>
     <div class="modal-actions">
-      <button class="btn-cancel" onclick="closeCatModal()">Cancel</button>
-      <button class="btn-save" onclick="saveCats()">Save</button>
+      <button class="btn-cancel" id="btn-cat-cancel">Cancel</button>
+      <button class="btn-save" id="btn-cat-save">Save</button>
     </div>
   </div>
 </div>
 
 <script>
+(() => {
+'use strict';
+
+/* ============================================================
+   Constants & storage keys
+   ============================================================ */
+const STORAGE_DATA = 'renewly_data';
+const STORAGE_CATS = 'renewly_cats';
 const DEFAULT_CATS = ['AI', 'Biohacking', 'Streaming'];
+const MAX_CATS = 5;
+const MS_PER_DAY = 86400000;
+const URGENT_DAYS = 4;   // "renewing in X days or less" banner
+const SOON_DAYS = 10;    // "renewing within X days" banner + stat
+const WORTH_VALUES = ['', 'keep', 'cut', 'maybe'];
 
-const SEED = [
-  // AI
-  {id:'a1',name:'Wondering About AI',author:'Karen Spinner',cat:'AI',since:'Feb 4, 2026',price:65,worth:'keep',notes:''},
-  {id:'a2',name:'Products With Attitude',author:'Karo',cat:'AI',since:'Feb 3, 2026',price:120,worth:'keep',notes:''},
-  {id:'a3',name:'Exploring Artificial Intelligence',author:'Elisa Terumi',cat:'AI',since:'Feb 27, 2026',price:60,worth:'',notes:''},
-  {id:'a4',name:'AI Blew My Mind',author:'Daria Cupareanu',cat:'AI',since:'Mar 8, 2026',price:100,worth:'keep',notes:''},
-  {id:'a5',name:'AI Meets Girlboss',author:'Pinkie',cat:'AI',since:'Mar 15, 2026',price:80,worth:'',notes:''},
-  {id:'a6',name:'ROBOTS ATE MY HOMEWORK',author:'Mia Kiraki',cat:'AI',since:'Mar 18, 2026',price:108,worth:'keep',notes:'Paid in EUR · $65 first year'},
-  {id:'a7',name:'Build to Launch',author:'Jenny Ouyang',cat:'AI',since:'Mar 24, 2026',price:120,worth:'keep',notes:''},
-  {id:'a8',name:'Leadership in Change',author:'Joel Salinas',cat:'AI',since:'Apr 6, 2026',price:49,worth:'',notes:''},
-  {id:'a9',name:'AI Product Leader',author:'Elena',cat:'AI',since:'Apr 11, 2026',price:89,worth:'',notes:''},
-  {id:'a10',name:'The AI Maker',author:'Wyndo',cat:'AI',since:'Apr 14, 2026',price:96,worth:'',notes:''},
-  {id:'a11',name:'Code Like a Girl',author:'Dinah',cat:'AI',since:'Apr 17, 2026',price:50,worth:'',notes:''},
-  {id:'a12',name:'UX + AI',author:'Ileana',cat:'AI',since:'Apr 18, 2026',price:70,worth:'',notes:''},
-  {id:'a13',name:'GemAI Unplugged',author:'Dheeraj',cat:'AI',since:'Apr 18, 2026',price:120,worth:'',notes:'Signing Apr 20'},
-  // Biohacking
-  {id:'b1',name:'The Thermalist Journal',author:'Dr. Susanna Søberg',cat:'Biohacking',since:'Jul 5, 2023',price:100,worth:'keep',notes:''},
-  {id:'b2',name:"Dave Asprey's Substack",author:'Dave Asprey',cat:'Biohacking',since:'Jan 10, 2026',price:176,worth:'keep',notes:''},
-  {id:'b3',name:'The Habit Healers',author:'Laurie Marbas, MD, MBA',cat:'Biohacking',since:'Dec 27, 2025',price:100,worth:'',notes:''},
-  {id:'b4',name:'Feed Your Mind',author:'Remi',cat:'Biohacking',since:'Mar 15, 2026',price:120,worth:'',notes:''},
-  {id:'b5',name:'Biohacking & Longevity',author:'Valerie Orsoni',cat:'Biohacking',since:'Mar 8, 2026',price:95,worth:'',notes:''},
-  // Streaming
-  {id:'s1',name:'Netflix',author:'Netflix',cat:'Streaming',since:'Nov 3, 2025',price:240,worth:'keep',notes:''},
-  {id:'s2',name:'Amazon Prime',author:'Amazon',cat:'Streaming',since:'Nov 17, 2025',price:139,worth:'keep',notes:''},
-  {id:'s3',name:'Apple TV+',author:'Apple',cat:'Streaming',since:'Dec 5, 2025',price:100,worth:'keep',notes:''},
-  {id:'s4',name:'HBO Max',author:'Warner Bros.',cat:'Streaming',since:'Dec 19, 2025',price:185,worth:'maybe',notes:''},
-  {id:'s5',name:'Hulu',author:'Hulu',cat:'Streaming',since:'Jan 8, 2026',price:228,worth:'maybe',notes:''},
-  {id:'s6',name:'Paramount+ & Showtime',author:'Paramount',cat:'Streaming',since:'Jun 5, 2026',price:168,worth:'keep',notes:'Bundle deal'},
-  {id:'s7',name:'Netflix',author:'TEST — renews soon',cat:'Streaming',since:'Apr 9, 2026',price:240,worth:'keep',notes:'TEST entry — renews Apr 9, 2027... wait, let\'s do Apr 28 for demo'},
-  {id:'s8',name:'Peacock',author:'NBCUniversal',cat:'Streaming',since:'Jan 22, 2026',price:170,worth:'maybe',notes:''},
-];
+const $ = id => document.getElementById(id);
 
-// Remove test duplicate, fix demo alert item
-const SEED_CLEAN = SEED.filter(i => i.id !== 's7');
-// Add one item that renews in ~8 days for demo alert
-SEED_CLEAN.push({id:'s9',name:'Demo Alert — Peacock 2',author:'NBCUniversal',cat:'Streaming',since:getDateNDaysAgo(357),price:170,worth:'maybe',notes:'This entry demos the 10-day alert'});
-
-function getDateNDaysAgo(n) {
-  const d = new Date();
-  d.setDate(d.getDate() - n);
-  return d.toLocaleDateString('en-US', {month:'short', day:'numeric', year:'numeric'});
+/* ============================================================
+   Escaping — every user-supplied string goes through esc()
+   before touching innerHTML or an HTML attribute
+   ============================================================ */
+function esc(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
-let stored = localStorage.getItem('renewly_data');
-let data = stored ? JSON.parse(stored) : SEED_CLEAN.map(i=>({...i}));
-let storedCats = localStorage.getItem('renewly_cats');
-let cats = storedCats ? JSON.parse(storedCats) : [...DEFAULT_CATS];
-let editId = null;
-let activeTab = 'All';
-
-function save() {
-  localStorage.setItem('renewly_data', JSON.stringify(data));
-  localStorage.setItem('renewly_cats', JSON.stringify(cats));
+/* ============================================================
+   Date utilities
+   ============================================================ */
+function startOfToday() {
+  const now = new Date();
+  now.setHours(0, 0, 0, 0);
+  return now;
 }
 
-function sinceDate(s) {
-  if (!s) return null;
+// Accepts "YYYY-MM-DD" (what the date input stores) with strict
+// component validation; falls back to Date parsing only for legacy
+// values like "Feb 4, 2026" saved by earlier versions.
+function parseDate(s) {
+  if (!s || typeof s !== 'string') return null;
+  const iso = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s.trim());
+  if (iso) {
+    const y = Number(iso[1]), m = Number(iso[2]), day = Number(iso[3]);
+    const d = new Date(y, m - 1, day); // local time, avoids the UTC shift of new Date("YYYY-MM-DD")
+    const valid = d.getFullYear() === y && d.getMonth() === m - 1 && d.getDate() === day;
+    return valid ? d : null;
+  }
   const d = new Date(s);
-  return isNaN(d) ? null : d;
+  return isNaN(d.getTime()) ? null : d;
+}
+
+function toISODate(d) {
+  const pad = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
 function getRenewalDate(item) {
-  const d = sinceDate(item.since);
-  if (!d) return null;
-  const now = new Date(); now.setHours(0,0,0,0);
-  const r = new Date(d);
-  r.setFullYear(now.getFullYear());
-  if (r <= now) r.setFullYear(now.getFullYear() + 1);
-  return r;
+  const start = parseDate(item.since);
+  if (!start) return null;
+  const today = startOfToday();
+  const renewal = new Date(start);
+  renewal.setHours(0, 0, 0, 0);
+  renewal.setFullYear(today.getFullYear());
+  if (renewal < today) renewal.setFullYear(today.getFullYear() + 1);
+  return renewal;
 }
 
 function daysUntil(d) {
   if (!d) return null;
-  const now = new Date(); now.setHours(0,0,0,0);
-  return Math.ceil((d - now) / 864e5);
+  return Math.ceil((d - startOfToday()) / MS_PER_DAY);
+}
+
+function renewalStatus(days) {
+  if (days === null) return 'none';
+  if (days <= URGENT_DAYS) return 'urgent';
+  if (days <= SOON_DAYS) return 'soon';
+  return 'ok';
 }
 
 function fmtDate(d) {
   if (!d) return '—';
-  return d.toLocaleDateString('en-US', {month:'short', day:'numeric', year:'numeric'});
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
+function fmtMoney(n) {
+  return '$' + (Number(n) || 0).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+}
+
+/* ============================================================
+   Storage — tolerant of corrupted or foreign localStorage data
+   ============================================================ */
+function loadStoredArray(key) {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function newId() {
+  return (typeof crypto !== 'undefined' && crypto.randomUUID)
+    ? crypto.randomUUID()
+    : Date.now().toString(36) + Math.random().toString(36).slice(2);
+}
+
+// Coerce a stored record into a known-good shape; reject garbage.
+function normalizeItem(raw) {
+  if (!raw || typeof raw !== 'object' || typeof raw.name !== 'string' || !raw.name.trim()) return null;
+  const price = Number(raw.price);
+  return {
+    id: typeof raw.id === 'string' && raw.id ? raw.id : newId(),
+    name: raw.name.trim(),
+    author: typeof raw.author === 'string' ? raw.author.trim() : '',
+    cat: typeof raw.cat === 'string' ? raw.cat : '',
+    since: typeof raw.since === 'string' ? raw.since : '',
+    price: Number.isFinite(price) && price >= 0 ? price : 0,
+    worth: WORTH_VALUES.includes(raw.worth) ? raw.worth : '',
+    notes: typeof raw.notes === 'string' ? raw.notes : ''
+  };
+}
+
+function save() {
+  localStorage.setItem(STORAGE_DATA, JSON.stringify(data));
+  localStorage.setItem(STORAGE_CATS, JSON.stringify(cats));
+}
+
+/* ============================================================
+   State — production build launches empty (no seed data)
+   ============================================================ */
+let data = (loadStoredArray(STORAGE_DATA) || []).map(normalizeItem).filter(Boolean);
+let cats = (loadStoredArray(STORAGE_CATS) || []).filter(c => typeof c === 'string' && c.trim());
+if (!cats.length) cats = [...DEFAULT_CATS];
+let editId = null;
+let activeTab = 'All';
+
+/* ============================================================
+   Google Calendar link
+   ============================================================ */
 function makeCalLink(item) {
-  const rd = getRenewalDate(item);
-  if (!rd) return '#';
-  const start = rd.toISOString().replace(/-/g,'').replace(/T.*/,'');
-  const end = new Date(rd.getTime() + 864e5).toISOString().replace(/-/g,'').replace(/T.*/,'');
-  const title = encodeURIComponent(`Renewly: ${item.name} renews today`);
-  const details = encodeURIComponent(`Your ${item.name} subscription renews. Annual price: $${item.price}. Open Renewly to decide: keep or cut?`);
-  return `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${title}&dates=${start}/${end}&details=${details}`;
+  const renewal = getRenewalDate(item);
+  if (!renewal) return null;
+  const calDate = d => toISODate(d).replace(/-/g, '');
+  const params = new URLSearchParams({
+    action: 'TEMPLATE',
+    text: `Renewly: ${item.name} renews today`,
+    dates: `${calDate(renewal)}/${calDate(new Date(renewal.getTime() + MS_PER_DAY))}`,
+    details: `Your ${item.name} subscription renews. Annual price: ${fmtMoney(item.price)}. Open Renewly to decide: keep or cut?`
+  });
+  return 'https://calendar.google.com/calendar/render?' + params.toString();
+}
+
+/* ============================================================
+   Rendering
+   ============================================================ */
+function catClass(cat) {
+  return 'cat-' + cat.replace(/[^A-Za-z0-9]/g, '');
 }
 
 function renderTabs() {
-  const wrap = document.getElementById('tabs-wrap');
-  const allTabs = ['All', ...cats];
-  wrap.innerHTML = allTabs.map(t => {
-    const cls = t === 'All' ? '' : `cat-${t.replace(/\s+/g,'')}`;
-    return `<button class="tab ${cls}${activeTab===t?' active':''}" onclick="setTab('${t}')">${t}</button>`;
-  }).join('') + (cats.length < 5 ? `<button class="add-cat-btn" onclick="openCatModal()">+ category</button>` : '');
+  const tabs = ['All', ...cats].map(t => {
+    const cls = t === 'All' ? '' : ' ' + catClass(t);
+    const active = activeTab === t ? ' active' : '';
+    return `<button class="tab${cls}${active}" data-tab="${esc(t)}">${esc(t)}</button>`;
+  }).join('');
+  const manageLabel = cats.length < MAX_CATS ? '+ category' : 'edit categories';
+  $('tabs-wrap').innerHTML = tabs +
+    `<button class="add-cat-btn" data-action="manage-cats">${manageLabel}</button>`;
 }
 
-function setTab(t) { activeTab = t; render(); }
+function renderStats(enriched) {
+  const annual = enriched.reduce((sum, r) => sum + (r.item.price || 0), 0);
+  const expiring = enriched.filter(r => r.days !== null && r.days >= 0 && r.days <= SOON_DAYS).length;
+  const undecided = enriched.filter(r => !r.item.worth).length;
+  $('s-annual').textContent = fmtMoney(annual);
+  $('s-total').textContent = data.length;
+  $('s-cats-sub').textContent = `across ${cats.length} categor${cats.length === 1 ? 'y' : 'ies'}`;
+  $('s-exp').textContent = expiring;
+  $('s-undecided').textContent = undecided;
+}
+
+function renderAlertBanner(bannerId, itemsId, rows, lineHtml) {
+  const banner = $(bannerId);
+  banner.classList.toggle('hidden', !rows.length);
+  if (rows.length) $(itemsId).innerHTML = rows.map(lineHtml).join('<br>');
+}
+
+function renderAlerts(enriched) {
+  const urgent = enriched.filter(r => r.days !== null && r.days >= 0 && r.days <= URGENT_DAYS);
+  const soon = enriched.filter(r => r.days !== null && r.days > URGENT_DAYS && r.days <= SOON_DAYS);
+  renderAlertBanner('alert-urgent', 'alert-urgent-items', urgent,
+    r => `<strong>${esc(r.item.name)}</strong> — renews in ${r.days} day(s) · ${fmtMoney(r.item.price)}/yr`);
+  renderAlertBanner('alert-soon', 'alert-soon-items', soon,
+    r => `<strong>${esc(r.item.name)}</strong> — ${r.days} days · ${fmtMoney(r.item.price)}/yr`);
+}
+
+const WORTH_LABELS = {
+  keep: '<span class="worth-keep">Keep</span>',
+  cut: '<span class="worth-cut">Cut</span>',
+  maybe: '<span class="worth-undecided">Maybe</span>',
+  '': '<span class="worth-undecided">—</span>'
+};
+
+function rowHtml({ item, renewal, days }) {
+  const status = renewalStatus(days);
+  const renewClass = { urgent: 'renew-urgent', soon: 'renew-soon' }[status] || 'renew-ok';
+
+  let renewText = esc(fmtDate(renewal));
+  if (days === 0) renewText = 'Today!';
+  else if (days === 1) renewText = 'Tomorrow';
+  else if (days !== null && days > 1 && days <= 30) {
+    renewText += ` <span style="font-size:11px;opacity:0.7">(${days}d)</span>`;
+  }
+
+  const calUrl = makeCalLink(item);
+  const calBtn = calUrl
+    ? `<a href="${esc(calUrl)}" target="_blank" rel="noopener noreferrer" class="cal-btn" title="Add renewal to Google Calendar">+ Cal</a>`
+    : '';
+
+  return `
+    <tr>
+      <td>
+        <div class="sub-name">${esc(item.name)}</div>
+        <div class="sub-author">${esc(item.author)}</div>
+      </td>
+      <td><span class="price-cell">${fmtMoney(item.price)}</span></td>
+      <td class="${renewClass}">${renewText}</td>
+      <td class="worth-cell">${WORTH_LABELS[item.worth] || WORTH_LABELS['']}</td>
+      <td><span class="worth-note">${esc(item.notes)}</span></td>
+      <td>
+        <div class="actions-cell">
+          ${calBtn}
+          <button class="action-btn" data-action="edit" data-id="${esc(item.id)}">Edit</button>
+          <button class="action-btn del" data-action="delete" data-id="${esc(item.id)}">Del</button>
+        </div>
+      </td>
+    </tr>`;
+}
+
+function renderTable(rows) {
+  $('tbody').innerHTML = rows.map(rowHtml).join('');
+  const empty = $('empty');
+  empty.classList.toggle('hidden', rows.length > 0);
+  if (!rows.length) {
+    $('empty-title').textContent = data.length ? 'No matches' : 'Nothing here yet';
+    $('empty-hint').textContent = data.length ? 'Try a different search or tab' : 'Add your first subscription above';
+  }
+}
 
 function render() {
   renderTabs();
-  const srch = (document.getElementById('srch').value || '').toLowerCase();
-  const srt = document.getElementById('srt').value;
+  const query = $('srch').value.trim().toLowerCase();
+  const sortBy = $('srt').value;
 
-  let items = [...data];
-  if (activeTab !== 'All') items = items.filter(i => i.cat === activeTab);
-  if (srch) items = items.filter(i => (i.name + i.author).toLowerCase().includes(srch));
-
-  items.sort((a, b) => {
-    if (srt === 'name') return a.name.localeCompare(b.name);
-    if (srt === 'cost') return (b.price||0) - (a.price||0);
-    const ra = getRenewalDate(a), rb = getRenewalDate(b);
-    return (ra||new Date(9999,0)) - (rb||new Date(9999,0));
+  // Compute renewal info once per item per render
+  const enriched = data.map(item => {
+    const renewal = getRenewalDate(item);
+    return { item, renewal, days: daysUntil(renewal) };
   });
 
-  // Stats
-  const annual = data.reduce((s,i) => s + (parseFloat(i.price)||0), 0);
-  const expiring = data.filter(i => { const d = daysUntil(getRenewalDate(i)); return d!==null&&d<=10&&d>=0; }).length;
-  const undecided = data.filter(i => !i.worth || i.worth === '').length;
-  document.getElementById('s-annual').textContent = '$' + annual.toLocaleString('en-US', {minimumFractionDigits:0,maximumFractionDigits:0});
-  document.getElementById('s-total').textContent = data.length;
-  document.getElementById('s-exp').textContent = expiring;
-  document.getElementById('s-undecided').textContent = undecided;
+  let rows = enriched;
+  if (activeTab !== 'All') rows = rows.filter(r => r.item.cat === activeTab);
+  if (query) rows = rows.filter(r => `${r.item.name} ${r.item.author}`.toLowerCase().includes(query));
 
-  // Alerts
-  const urgent = data.filter(i => { const d = daysUntil(getRenewalDate(i)); return d!==null&&d<=4&&d>=0; });
-  const soon = data.filter(i => { const d = daysUntil(getRenewalDate(i)); return d!==null&&d>4&&d<=10; });
-
-  const urgentBanner = document.getElementById('alert-urgent');
-  const soonBanner = document.getElementById('alert-soon');
-
-  if (urgent.length) {
-    urgentBanner.classList.remove('hidden');
-    document.getElementById('alert-urgent-items').innerHTML = urgent.map(i => `<strong>${i.name}</strong> — renews in ${daysUntil(getRenewalDate(i))} day(s) · $${i.price}/yr`).join('<br>');
-  } else urgentBanner.classList.add('hidden');
-
-  if (soon.length) {
-    soonBanner.classList.remove('hidden');
-    document.getElementById('alert-soon-items').innerHTML = soon.map(i => `<strong>${i.name}</strong> — ${daysUntil(getRenewalDate(i))} days · $${i.price}/yr`).join('<br>');
-  } else soonBanner.classList.add('hidden');
-
-  // Table
-  const tbody = document.getElementById('tbody');
-  tbody.innerHTML = '';
-  document.getElementById('empty').classList.toggle('hidden', !!items.length);
-
-  items.forEach(item => {
-    const rd = getRenewalDate(item);
-    const days = daysUntil(rd);
-    let rc = 'renew-ok', rt = fmtDate(rd);
-    if (days !== null) {
-      if (days <= 4) rc = 'renew-urgent';
-      else if (days <= 10) rc = 'renew-soon';
-      if (days === 0) rt = 'Today!';
-      else if (days === 1) rt = 'Tomorrow';
-      else if (days > 0 && days <= 30) rt = fmtDate(rd) + ` <span style="font-size:11px;opacity:0.7">(${days}d)</span>`;
-    }
-
-    const worthMap = { keep: '<span class="worth-keep">Keep</span>', cut: '<span class="worth-cut">Cut</span>', maybe: '<span class="worth-undecided">Maybe</span>', '': '<span class="worth-undecided">—</span>' };
-    const worthHtml = worthMap[item.worth || ''] || '<span class="worth-undecided">—</span>';
-
-    const tr = document.createElement('tr');
-    tr.innerHTML = `
-      <td>
-        <div class="sub-name">${item.name}</div>
-        <div class="sub-author">${item.author}</div>
-      </td>
-      <td><span class="price-cell">$${(item.price||0).toLocaleString()}</span></td>
-      <td class="${rc}">${rt}</td>
-      <td class="worth-cell">${worthHtml}</td>
-      <td><span class="worth-note">${item.notes||''}</span></td>
-      <td>
-        <div class="actions-cell">
-          <a href="${makeCalLink(item)}" target="_blank" class="cal-btn" title="Add renewal to Google Calendar">+ Cal</a>
-          <button class="action-btn" onclick="openEdit('${item.id}')">Edit</button>
-          <button class="action-btn del" onclick="delItem('${item.id}')">Del</button>
-        </div>
-      </td>`;
-    tbody.appendChild(tr);
+  rows = [...rows].sort((a, b) => {
+    if (sortBy === 'name') return a.item.name.localeCompare(b.item.name);
+    if (sortBy === 'cost') return (b.item.price || 0) - (a.item.price || 0);
+    return (a.renewal || new Date(9999, 0)) - (b.renewal || new Date(9999, 0));
   });
+
+  renderStats(enriched);
+  renderAlerts(enriched);
+  renderTable(rows);
 }
 
+/* ============================================================
+   Modal (add / edit)
+   ============================================================ */
 function populateCatSelect() {
-  const sel = document.getElementById('m-cat');
-  sel.innerHTML = cats.map(c => `<option value="${c}">${c}</option>`).join('');
+  $('m-cat').innerHTML = cats.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
+}
+
+function fillForm(item) {
+  $('m-name').value = item.name || '';
+  $('m-author').value = item.author || '';
+  const start = parseDate(item.since || '');
+  $('m-since').value = start ? toISODate(start) : '';
+  $('m-price').value = item.price ?? '';
+  $('m-worth').value = WORTH_VALUES.includes(item.worth) ? item.worth : '';
+  $('m-notes').value = item.notes || '';
+  populateCatSelect();
+  $('m-cat').value = cats.includes(item.cat) ? item.cat : cats[0];
+}
+
+function openModal() {
+  $('modal-overlay').classList.remove('hidden');
+  $('m-name').focus();
+}
+
+function closeModal() {
+  $('modal-overlay').classList.add('hidden');
+  editId = null;
 }
 
 function openAdd() {
   editId = null;
-  document.getElementById('modal-title').textContent = 'Add subscription';
-  ['m-name','m-author','m-since','m-notes'].forEach(id => document.getElementById(id).value = '');
-  document.getElementById('m-price').value = '';
-  document.getElementById('m-worth').value = '';
-  populateCatSelect();
-  document.getElementById('modal-overlay').classList.remove('hidden');
+  $('modal-title').textContent = 'Add subscription';
+  fillForm({ price: '' });
+  openModal();
 }
 
 function openEdit(id) {
-  editId = id;
   const item = data.find(x => x.id === id);
   if (!item) return;
-  document.getElementById('modal-title').textContent = 'Edit subscription';
-  document.getElementById('m-name').value = item.name || '';
-  document.getElementById('m-author').value = item.author || '';
-  document.getElementById('m-since').value = item.since || '';
-  document.getElementById('m-price').value = item.price || '';
-  document.getElementById('m-worth').value = item.worth || '';
-  document.getElementById('m-notes').value = item.notes || '';
-  populateCatSelect();
-  document.getElementById('m-cat').value = item.cat || cats[0];
-  document.getElementById('modal-overlay').classList.remove('hidden');
-}
-
-function closeModal() {
-  document.getElementById('modal-overlay').classList.add('hidden');
-  editId = null;
+  editId = id;
+  $('modal-title').textContent = 'Edit subscription';
+  fillForm(item);
+  openModal();
 }
 
 function saveItem() {
-  const name = document.getElementById('m-name').value.trim();
-  if (!name) return;
+  const name = $('m-name').value.trim();
+  if (!name) { $('m-name').focus(); return; }
+
+  const since = $('m-since').value.trim();
+  if (since && !parseDate(since)) { $('m-since').focus(); return; }
+
+  const priceRaw = $('m-price').value.trim();
+  const price = priceRaw === '' ? 0 : parseFloat(priceRaw);
+  if (!Number.isFinite(price) || price < 0) { $('m-price').focus(); return; }
+
   const item = {
-    id: editId || Date.now().toString(),
+    id: editId || newId(),
     name,
-    author: document.getElementById('m-author').value.trim(),
-    cat: document.getElementById('m-cat').value,
-    since: document.getElementById('m-since').value.trim(),
-    price: parseFloat(document.getElementById('m-price').value) || 0,
-    worth: document.getElementById('m-worth').value,
-    notes: document.getElementById('m-notes').value.trim()
+    author: $('m-author').value.trim(),
+    cat: cats.includes($('m-cat').value) ? $('m-cat').value : cats[0],
+    since,
+    price,
+    worth: WORTH_VALUES.includes($('m-worth').value) ? $('m-worth').value : '',
+    notes: $('m-notes').value.trim()
   };
-  if (editId) {
-    const idx = data.findIndex(x => x.id === editId);
-    data[idx] = item;
-  } else {
-    data.push(item);
-  }
-  save(); closeModal(); render();
+
+  const idx = editId ? data.findIndex(x => x.id === editId) : -1;
+  if (idx !== -1) data[idx] = item;
+  else data.push(item);
+
+  save();
+  closeModal();
+  render();
 }
 
 function delItem(id) {
-  if (confirm('Delete this subscription?')) {
-    data = data.filter(x => x.id !== id);
-    save(); render();
-  }
+  if (!confirm('Delete this subscription?')) return;
+  data = data.filter(x => x.id !== id);
+  save();
+  render();
 }
 
-// Categories
-function openCatModal() {
-  const list = document.getElementById('cat-modal-list');
-  list.innerHTML = cats.map((c,i) => `
+/* ============================================================
+   Manage categories modal
+   ============================================================ */
+// data-orig-idx ties an input back to the category it started as,
+// so renames can move that category's subscriptions along.
+function catRowHtml(value, origIdx) {
+  const idxAttr = origIdx === null ? '' : ` data-orig-idx="${origIdx}"`;
+  return `
     <div class="cat-modal-item">
-      <input type="text" value="${c}" data-idx="${i}" style="background:var(--beige);border:1.5px solid var(--beige-dark);border-radius:8px;padding:8px 12px;font-family:'DM Sans',sans-serif;font-size:14px;color:var(--charcoal);outline:none;flex:1">
-      <button onclick="removeCatField(${i})" title="Remove">✕</button>
-    </div>`).join('');
-  document.getElementById('cat-modal-overlay').classList.remove('hidden');
+      <input type="text" maxlength="30" value="${esc(value)}"${idxAttr}>
+      <button type="button" data-action="remove-cat" title="Remove">✕</button>
+    </div>`;
+}
+
+function openCatModal() {
+  $('cat-modal-list').innerHTML = cats.map((c, i) => catRowHtml(c, i)).join('');
+  $('cat-modal-overlay').classList.remove('hidden');
 }
 
 function closeCatModal() {
-  document.getElementById('cat-modal-overlay').classList.add('hidden');
+  $('cat-modal-overlay').classList.add('hidden');
 }
 
 function addCatField() {
-  const list = document.getElementById('cat-modal-list');
-  if (list.children.length >= 5) return;
-  const div = document.createElement('div');
-  div.className = 'cat-modal-item';
-  const idx = list.children.length;
-  div.innerHTML = `<input type="text" value="" data-idx="${idx}" style="background:var(--beige);border:1.5px solid var(--beige-dark);border-radius:8px;padding:8px 12px;font-family:'DM Sans',sans-serif;font-size:14px;color:var(--charcoal);outline:none;flex:1"><button onclick="removeCatField(${idx})" title="Remove">✕</button>`;
-  list.appendChild(div);
-}
-
-function removeCatField(idx) {
-  const list = document.getElementById('cat-modal-list');
-  if (list.children.length <= 1) return;
-  list.children[idx] && list.children[idx].remove();
+  const list = $('cat-modal-list');
+  if (list.children.length >= MAX_CATS) return;
+  list.insertAdjacentHTML('beforeend', catRowHtml('', null));
+  list.lastElementChild.querySelector('input').focus();
 }
 
 function saveCats() {
-  const inputs = document.querySelectorAll('#cat-modal-list input');
-  cats = [...inputs].map(i => i.value.trim()).filter(Boolean).slice(0, 5);
-  save(); closeCatModal(); render();
+  const inputs = [...document.querySelectorAll('#cat-modal-list input')];
+  const next = [];
+  const renames = [];
+  for (const input of inputs) {
+    const name = input.value.trim();
+    if (!name || next.includes(name) || next.length >= MAX_CATS) continue;
+    next.push(name);
+    if (input.dataset.origIdx !== undefined) {
+      const oldName = cats[Number(input.dataset.origIdx)];
+      if (oldName && oldName !== name) renames.push([oldName, name]);
+    }
+  }
+  if (!next.length) return;
+  for (const [oldName, newName] of renames) {
+    data.forEach(item => { if (item.cat === oldName) item.cat = newName; });
+    if (activeTab === oldName) activeTab = newName;
+  }
+  cats = next;
+  if (activeTab !== 'All' && !cats.includes(activeTab)) activeTab = 'All';
+  save();
+  closeCatModal();
+  render();
 }
 
-render();
+/* ============================================================
+   Event wiring — no inline handlers, no globals
+   ============================================================ */
+function init() {
+  $('btn-add').addEventListener('click', openAdd);
+  $('btn-cancel').addEventListener('click', closeModal);
+  $('btn-save').addEventListener('click', saveItem);
+  $('srch').addEventListener('input', render);
+  $('srt').addEventListener('change', render);
+
+  $('tabs-wrap').addEventListener('click', e => {
+    if (e.target.closest('button[data-action="manage-cats"]')) { openCatModal(); return; }
+    const btn = e.target.closest('button[data-tab]');
+    if (!btn) return;
+    activeTab = btn.dataset.tab;
+    render();
+  });
+
+  $('btn-add-cat-field').addEventListener('click', addCatField);
+  $('btn-cat-cancel').addEventListener('click', closeCatModal);
+  $('btn-cat-save').addEventListener('click', saveCats);
+
+  $('cat-modal-list').addEventListener('click', e => {
+    const btn = e.target.closest('button[data-action="remove-cat"]');
+    if (!btn) return;
+    if ($('cat-modal-list').children.length > 1) btn.closest('.cat-modal-item').remove();
+  });
+
+  $('cat-modal-overlay').addEventListener('click', e => {
+    if (e.target === e.currentTarget) closeCatModal();
+  });
+
+  $('tbody').addEventListener('click', e => {
+    const btn = e.target.closest('button[data-action]');
+    if (!btn) return;
+    if (btn.dataset.action === 'edit') openEdit(btn.dataset.id);
+    else if (btn.dataset.action === 'delete') delItem(btn.dataset.id);
+  });
+
+  $('modal-overlay').addEventListener('click', e => {
+    if (e.target === e.currentTarget) closeModal();
+  });
+
+  document.addEventListener('keydown', e => {
+    if (e.key !== 'Escape') return;
+    if (!$('cat-modal-overlay').classList.contains('hidden')) closeCatModal();
+    else if (!$('modal-overlay').classList.contains('hidden')) closeModal();
+  });
+
+  render();
+}
+
+init();
+})();
 </script>
 </body>
 </html>
